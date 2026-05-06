@@ -3,7 +3,7 @@
 // on both native and wasm, loading is at runtime
 // this allows the glTF file to change without having to rebuild the WASM
 
-pub const ATLAS_SIZE: i32 = 1024; // 8192 is the default of wgpu::limits::max_texture_dimension_2d 
+pub const ATLAS_SIZE: i32 = 8192; // 8192 is the default of wgpu::limits::max_texture_dimension_2d 
 // TODO: set atlas size dynamically; if one atlas is enough, use a smaller atlas size; if multiple are needed, use 8192
 // TODO: fix transparency in textures; parsing is done correctly, but shader is not correct. also, in gltf::material, parse alpha_mode and alpha_cutoff to do this properly
 // TODO: implement gltf::material double_sided and do backface culling conditionally
@@ -405,13 +405,19 @@ impl Scene {
             }
         }
 
-        // collect meshes referenced by nodes
-        for node in document.default_scene().map_or_else(
-            || document.nodes().collect::<Vec<_>>(),
-            |scene| scene.nodes().collect::<Vec<_>>(),
+        // recursive helper to process all nodes and their children
+        fn process_node_recursive(
+            node: &gltf::scene::Node,
+            parent_mat: glam::Mat4,
+            buffers: &[gltf::buffer::Data],
+            image_uvs: &std::collections::HashMap<usize, (i32, glam::Vec4)>,
+            geometries: &mut Vec<GpuTriangleGeometry>,
+            attributes: &mut Vec<GpuTriangleAttribute>,
+            materials: &mut Vec<GpuMaterial>,
+            prim_infos: &mut Vec<PrimitiveInfo>,
         ) {
             // compute this node's transform matrix
-            let model_mat = match node.transform() {
+            let local_mat = match node.transform() {
                 gltf::scene::Transform::Matrix { matrix } => {
                     glam::Mat4::from_cols_array_2d(&matrix)
                 }
@@ -426,6 +432,7 @@ impl Scene {
                 }
             };
 
+            let model_mat = parent_mat * local_mat;
             let normal_mat = model_mat.inverse().transpose();
 
             // get the mesh data if this node references a mesh
@@ -445,10 +452,10 @@ impl Scene {
                             None => continue, // if there are no positions (vertex positions), skip this primitive
                         };
 
-                        let normals: Vec<glam::Vec3> = match reader.read_normals() {
-                            Some(it) => it.map(glam::Vec3::from_array).collect(),
-                            None => continue, // if there are no normals, skip this primitive
-                        };
+                        let normals = reader.read_normals().map_or_else(
+                            || vec![glam::Vec3::Y; positions.len()],
+                            |it| it.map(glam::Vec3::from_array).collect(),
+                        );
 
                         let tex_coords: Vec<glam::Vec2> = reader.read_tex_coords(0).map_or_else(
                             || vec![glam::Vec2::ZERO; positions.len()],
@@ -473,20 +480,20 @@ impl Scene {
                         let (base_color_tex_layer, base_color_uv) = get_layer_and_uv(
                             pbr.base_color_texture()
                                 .map(|t| t.texture().source().index()), // this index should match the image's index from images.iter().enumerate(), which is a key in image_uvs
-                            &image_uvs,
+                            image_uvs,
                         );
 
                         let (metallic_roughness_tex_layer, metallic_roughness_uv) =
                             get_layer_and_uv(
                                 pbr.metallic_roughness_texture()
                                     .map(|t| t.texture().source().index()),
-                                &image_uvs,
+                                image_uvs,
                             );
 
                         let norm_tex = mat.normal_texture();
                         let (normal_tex_layer, normal_uv) = get_layer_and_uv(
                             norm_tex.as_ref().map(|t| t.texture().source().index()),
-                            &image_uvs,
+                            image_uvs,
                         );
 
                         materials.push(GpuMaterial {
@@ -539,9 +546,41 @@ impl Scene {
                                 uv2: tex_coords[i2],
                             });
                         }
+                    } else {
+                        log::info!(
+                            "Mesh mode is not triangles, skipping primitive with mode {:?}",
+                            primitive.mode()
+                        );
                     }
                 }
             }
+
+            // recursively process all child nodes
+            for child in node.children() {
+                process_node_recursive(
+                    &child, model_mat, buffers, image_uvs, geometries, attributes, materials,
+                    prim_infos,
+                );
+            }
+        }
+
+        // collect meshes referenced by nodes (including all children)
+        let root_nodes = document.default_scene().map_or_else(
+            || document.nodes().collect::<Vec<_>>(),
+            |scene| scene.nodes().collect::<Vec<_>>(),
+        );
+
+        for node in root_nodes {
+            process_node_recursive(
+                &node,
+                glam::Mat4::IDENTITY,
+                &buffers,
+                &image_uvs,
+                &mut geometries,
+                &mut attributes,
+                &mut materials,
+                &mut prim_infos,
+            );
         }
 
         let mut bvh_nodes = vec![GpuBvhNode {

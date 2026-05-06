@@ -18,7 +18,7 @@ path = "src/main.rs"
 testing = ["dep:image", "dep:serde", "dep:serde_yaml"]
 
 [dependencies]
-wgpu = "29.0.1"
+wgpu = "29.0.3"
 winit = "0.30.13"
 log = "0.4.29"
 gltf = { version = "1.4.1", features = [
