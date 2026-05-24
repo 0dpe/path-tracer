@@ -9,7 +9,7 @@ license = "MIT"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-# avoid "the bin target the bin target `path_tracer` in package `path_tracer v0.1.0 ()` has the same output filename as the lib target `path_tracer` in package `path_tracer v0.1.0 ()"
+# avoid "the bin target the bin target `path-tracer` in package `path-tracer v0.1.0 ()` has the same output filename as the lib target `path-tracer` in package `path-tracer v0.1.0 ()`
 [[bin]]
 name = "path-tracer-app"
 path = "src/main.rs"
