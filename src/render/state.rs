@@ -379,7 +379,7 @@ impl State {
         });
 
         // load and parse a glTF 2.0 file
-        let scene = scene::Scene::new("assets/mc.glb").await?;
+        let scene = scene::Scene::new("assets/dorm.glb").await?;
 
         const ATLAS_SIZE: u32 = scene::ATLAS_SIZE as u32;
 

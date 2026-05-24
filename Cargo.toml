@@ -1,9 +1,9 @@
 [package]
-name = "path_tracer"
+name = "path-tracer"
 version = "0.1.0"
 edition = "2024"
 description = "Demo Rust wgpu interactive path tracer."
-repository = "https://github.com/0dpe/path_tracer"
+repository = "https://github.com/0dpe/path-tracer"
 license = "MIT"
 
 [lib]
@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 
 # avoid "the bin target the bin target `path_tracer` in package `path_tracer v0.1.0 ()` has the same output filename as the lib target `path_tracer` in package `path_tracer v0.1.0 ()"
 [[bin]]
-name = "path_tracer_app"
+name = "path-tracer-app"
 path = "src/main.rs"
 
 [features]
@@ -26,21 +26,21 @@ gltf = { version = "1.4.1", features = [
     "KHR_materials_emissive_strength",
 ] }
 bytemuck = { version = "1.25.0", features = ["derive"] }
-glam = { version = "0.32.1", features = ["bytemuck", "serde"] }
+glam = { version = "0.33.0", features = ["bytemuck", "serde"] }
 web-time = "1.1.0"
 guillotiere = "0.7.0"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.7"
 console_log = "1.0.0"
-wasm-bindgen = "0.2.120"
-wasm-bindgen-futures = "0.4.70"
-web-sys = { version = "0.3.97", features = ["Response"] }
-js-sys = "0.3.97"
+wasm-bindgen = "0.2.122"
+wasm-bindgen-futures = "0.4.72"
+web-sys = { version = "0.3.99", features = ["Response"] }
+js-sys = "0.3.99"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger = "0.11.10"
 pollster = "0.4.0"
 image = { version = "0.25.10", optional = true }
-serde = { version = "1.0", optional = true, features = ["derive"] }
-serde_yaml = { version = "0.9", optional = true }
+serde = { version = "1.0.228", optional = true, features = ["derive"] }
+serde_yaml = { version = "0.9.34+deprecated", optional = true }

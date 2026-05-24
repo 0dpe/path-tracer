@@ -149,100 +149,6 @@ struct PrimitiveInfo {
     centroid: glam::Vec3,
 }
 
-// helper to convert image into RGBA8
-// most textures from most models are 8 bit; higher bit depth textures are uncommon
-// is_srgb for converting base color textures from sRGB to linear; only base color textures are sRGB in glTF, which needs conversion
-// https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#metallic-roughness-material
-fn convert_to_rgba8(image: &gltf::image::Data, is_srgb: bool, srgb_lut: &[u8; 256]) -> Vec<u8> {
-    use gltf::image::Format;
-
-    #[cfg(all(feature = "testing", not(target_arch = "wasm32")))]
-    log::info!("Converting image with format {:?} to RGBA8", image.format);
-
-    let mut rgba = match image.format {
-        Format::R8 => image.pixels.iter().flat_map(|&r| [r, r, r, 255]).collect(),
-        Format::R8G8 => image
-            .pixels
-            .chunks_exact(2)
-            .flat_map(|rg| [rg[0], rg[1], 0, 255])
-            .collect(),
-        Format::R8G8B8 => image
-            .pixels
-            .chunks_exact(3)
-            .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255])
-            .collect(),
-        Format::R8G8B8A8 => image.pixels.clone(),
-
-        Format::R16 => image
-            .pixels
-            .chunks_exact(2)
-            .flat_map(|r| {
-                let v = (u16::from_le_bytes([r[0], r[1]]) >> 8) as u8;
-                [v, v, v, 255]
-            })
-            .collect(),
-        Format::R16G16 => image
-            .pixels
-            .chunks_exact(4)
-            .flat_map(|rg| {
-                let r = (u16::from_le_bytes([rg[0], rg[1]]) >> 8) as u8;
-                let g = (u16::from_le_bytes([rg[2], rg[3]]) >> 8) as u8;
-                [r, r, r, g]
-            })
-            .collect(),
-        Format::R16G16B16 => image
-            .pixels
-            .chunks_exact(6)
-            .flat_map(|rgb| {
-                let r = (u16::from_le_bytes([rgb[0], rgb[1]]) >> 8) as u8;
-                let g = (u16::from_le_bytes([rgb[2], rgb[3]]) >> 8) as u8;
-                let b = (u16::from_le_bytes([rgb[4], rgb[5]]) >> 8) as u8;
-                [r, g, b, 255]
-            })
-            .collect(),
-        Format::R16G16B16A16 => image
-            .pixels
-            .chunks_exact(8)
-            .flat_map(|rgba| {
-                let r = (u16::from_le_bytes([rgba[0], rgba[1]]) >> 8) as u8;
-                let g = (u16::from_le_bytes([rgba[2], rgba[3]]) >> 8) as u8;
-                let b = (u16::from_le_bytes([rgba[4], rgba[5]]) >> 8) as u8;
-                let a = (u16::from_le_bytes([rgba[6], rgba[7]]) >> 8) as u8;
-                [r, g, b, a]
-            })
-            .collect(),
-        _ => {
-            log::warn!(
-                "Unsupported image format {:?}, using fallback opaque white texture",
-                image.format
-            );
-            vec![255; (image.width * image.height * 4) as usize]
-        }
-    };
-
-    // sRGB -> linear conversion mapping
-    if is_srgb {
-        for pixel in rgba.chunks_exact_mut(4) {
-            pixel[0] = srgb_lut[pixel[0] as usize];
-            pixel[1] = srgb_lut[pixel[1] as usize];
-            pixel[2] = srgb_lut[pixel[2] as usize];
-            // the alpha channel is strictly linear per the glTF spec, so don't modify pixel[3]
-        }
-    }
-
-    rgba
-}
-
-// helper to fetch mapping bounds from dictionary
-fn get_layer_and_uv(
-    img_idx_opt: Option<usize>,
-    image_uvs: &std::collections::HashMap<usize, (i32, glam::Vec4)>,
-) -> (i32, glam::Vec4) {
-    img_idx_opt
-        .and_then(|idx| image_uvs.get(&idx).copied())
-        .unwrap_or((-1, glam::Vec4::ZERO)) // return -1 layer if no texture attached
-}
-
 // private helper function used in new()
 // not included directly inside new because conditional compilation with variable scopes would get messy
 #[allow(clippy::unused_async)]
@@ -286,6 +192,8 @@ async fn load_gltf_bytes(path: &str) -> Result<Vec<u8>, Box<dyn std::error::Erro
 
 impl Scene {
     pub async fn new(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let scene_parsing_start = web_time::Instant::now();
+
         let (document, buffers, images) = gltf::import_slice(load_gltf_bytes(path).await?)?;
 
         let mut geometries = Vec::new();
@@ -336,7 +244,94 @@ impl Scene {
         // loop through each image
         // if there are no images, this loop is skipped, and atlases just contains one empty ATLAS_SIZE RGBA texture, which is fine since the shader will check if the layer index is -1 and skip texturing in that case
         for (img_idx, image) in images.iter().enumerate() {
-            let rgba = convert_to_rgba8(image, srgb_images.contains(&img_idx), &srgb_to_linear_lut);
+            use gltf::image::Format;
+
+            #[cfg(all(feature = "testing", not(target_arch = "wasm32")))]
+            log::info!("Converting image with format {:?} to RGBA8", image.format);
+
+            // convert image into RGBA8
+            // most textures from most models are 8 bit; higher bit depth textures are uncommon
+            let mut rgba = match image.format {
+                Format::R8 => image.pixels.iter().flat_map(|&r| [r, r, r, 255]).collect(),
+                Format::R8G8 => image
+                    .pixels
+                    .chunks_exact(2)
+                    .flat_map(|rg| [rg[0], rg[1], 0, 255])
+                    .collect(),
+                Format::R8G8B8 => image
+                    .pixels
+                    .chunks_exact(3)
+                    .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255])
+                    .collect(),
+                Format::R8G8B8A8 => image.pixels.clone(),
+
+                Format::R16 => image
+                    .pixels
+                    .chunks_exact(2)
+                    .flat_map(|r| {
+                        let v = (u16::from_le_bytes([r[0], r[1]]) >> 8) as u8;
+                        [v, v, v, 255]
+                    })
+                    .collect(),
+                Format::R16G16 => image
+                    .pixels
+                    .chunks_exact(4)
+                    .flat_map(|rg| {
+                        let r = (u16::from_le_bytes([rg[0], rg[1]]) >> 8) as u8;
+                        let g = (u16::from_le_bytes([rg[2], rg[3]]) >> 8) as u8;
+                        [r, r, r, g]
+                    })
+                    .collect(),
+                Format::R16G16B16 => image
+                    .pixels
+                    .chunks_exact(6)
+                    .flat_map(|rgb| {
+                        let r = (u16::from_le_bytes([rgb[0], rgb[1]]) >> 8) as u8;
+                        let g = (u16::from_le_bytes([rgb[2], rgb[3]]) >> 8) as u8;
+                        let b = (u16::from_le_bytes([rgb[4], rgb[5]]) >> 8) as u8;
+                        [r, g, b, 255]
+                    })
+                    .collect(),
+                Format::R16G16B16A16 => image
+                    .pixels
+                    .chunks_exact(8)
+                    .flat_map(|rgba| {
+                        let r = (u16::from_le_bytes([rgba[0], rgba[1]]) >> 8) as u8;
+                        let g = (u16::from_le_bytes([rgba[2], rgba[3]]) >> 8) as u8;
+                        let b = (u16::from_le_bytes([rgba[4], rgba[5]]) >> 8) as u8;
+                        let a = (u16::from_le_bytes([rgba[6], rgba[7]]) >> 8) as u8;
+                        [r, g, b, a]
+                    })
+                    .collect(),
+                _ => {
+                    log::warn!(
+                        "Unsupported image format {:?}, using fallback opaque white texture",
+                        image.format
+                    );
+                    vec![255; (image.width * image.height * 4) as usize]
+                }
+            };
+
+            // converting base color textures from sRGB to linear; only base color textures are sRGB in glTF, which needs conversion
+            // https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#metallic-roughness-material
+            if srgb_images.contains(&img_idx) {
+                for pixel in rgba.chunks_exact_mut(4) {
+                    pixel[0] = srgb_to_linear_lut[pixel[0] as usize];
+                    pixel[1] = srgb_to_linear_lut[pixel[1] as usize];
+                    pixel[2] = srgb_to_linear_lut[pixel[2] as usize];
+                    // the alpha channel is strictly linear per the glTF spec, so don't modify pixel[3]
+                }
+            }
+
+            #[cfg(all(feature = "testing", not(target_arch = "wasm32")))]
+            // save parsed images for testing
+            Self::save_rgba_image(
+                &format!("parsed_image_{img_idx}.png"),
+                &rgba,
+                image.width,
+                image.height,
+            );
+
             let size = guillotiere::size2(image.width.cast_signed(), image.height.cast_signed());
             let mut allocation = None;
             let mut layer_idx = 0;
@@ -390,19 +385,14 @@ impl Scene {
             image_uvs.insert(img_idx, (layer_idx as i32, uv_offset_scale));
         }
 
-        #[cfg(all(feature = "testing", not(target_arch = "wasm32")))]
-        {
-            // save parsed images for testing
-            for (img_idx, image) in images.iter().enumerate() {
-                let rgba =
-                    convert_to_rgba8(image, srgb_images.contains(&img_idx), &srgb_to_linear_lut);
-                Self::save_rgba_image(
-                    &format!("parsed_image_{img_idx}.png"),
-                    &rgba,
-                    image.width,
-                    image.height,
-                );
-            }
+        // helper to fetch mapping bounds from dictionary
+        fn get_layer_and_uv(
+            img_idx_opt: Option<usize>,
+            image_uvs: &std::collections::HashMap<usize, (i32, glam::Vec4)>,
+        ) -> (i32, glam::Vec4) {
+            img_idx_opt
+                .and_then(|idx| image_uvs.get(&idx).copied())
+                .unwrap_or((-1, glam::Vec4::ZERO)) // return -1 layer if no texture attached
         }
 
         // recursive helper to process all nodes and their children
@@ -661,6 +651,11 @@ impl Scene {
 
         #[cfg(all(feature = "testing", not(target_arch = "wasm32")))]
         scene.save_scene_data_json();
+
+        log::info!(
+            "Finished full scene construction in {:?}",
+            scene_parsing_start.elapsed()
+        );
 
         Ok(scene)
     }
