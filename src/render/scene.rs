@@ -974,7 +974,7 @@ impl Scene {
 
         output_path.push("scene_data.yaml");
 
-        match serde_yaml::to_string(&scene_data) {
+        match serde_saphyr::to_string(&scene_data) {
             Ok(yaml) => match std::fs::write(&output_path, yaml) {
                 Ok(()) => {
                     log::info!(
