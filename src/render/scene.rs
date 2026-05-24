@@ -192,8 +192,6 @@ async fn load_gltf_bytes(path: &str) -> Result<Vec<u8>, Box<dyn std::error::Erro
 
 impl Scene {
     pub async fn new(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let scene_parsing_start = web_time::Instant::now();
-
         let (document, buffers, images) = gltf::import_slice(load_gltf_bytes(path).await?)?;
 
         let mut geometries = Vec::new();
@@ -241,9 +239,13 @@ impl Scene {
 
         let mut image_uvs = std::collections::HashMap::new();
 
+        let mut rgba = Vec::new(); // declare once to save performance
+
         // loop through each image
         // if there are no images, this loop is skipped, and atlases just contains one empty ATLAS_SIZE RGBA texture, which is fine since the shader will check if the layer index is -1 and skip texturing in that case
         for (img_idx, image) in images.iter().enumerate() {
+            rgba.clear();
+
             use gltf::image::Format;
 
             #[cfg(all(feature = "testing", not(target_arch = "wasm32")))]
@@ -251,66 +253,55 @@ impl Scene {
 
             // convert image into RGBA8
             // most textures from most models are 8 bit; higher bit depth textures are uncommon
-            let mut rgba = match image.format {
-                Format::R8 => image.pixels.iter().flat_map(|&r| [r, r, r, 255]).collect(),
-                Format::R8G8 => image
-                    .pixels
-                    .chunks_exact(2)
-                    .flat_map(|rg| [rg[0], rg[1], 0, 255])
-                    .collect(),
-                Format::R8G8B8 => image
-                    .pixels
-                    .chunks_exact(3)
-                    .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255])
-                    .collect(),
-                Format::R8G8B8A8 => image.pixels.clone(),
+            match image.format {
+                Format::R8 => rgba.extend(image.pixels.iter().flat_map(|&r| [r, r, r, 255])),
+                Format::R8G8 => rgba.extend(
+                    image
+                        .pixels
+                        .chunks_exact(2)
+                        .flat_map(|rg| [rg[0], rg[1], 0, 255]),
+                ),
+                Format::R8G8B8 => rgba.extend(
+                    image
+                        .pixels
+                        .chunks_exact(3)
+                        .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255]),
+                ),
+                Format::R8G8B8A8 => rgba.extend(image.pixels.iter().copied()),
 
-                Format::R16 => image
-                    .pixels
-                    .chunks_exact(2)
-                    .flat_map(|r| {
-                        let v = (u16::from_le_bytes([r[0], r[1]]) >> 8) as u8;
-                        [v, v, v, 255]
-                    })
-                    .collect(),
-                Format::R16G16 => image
-                    .pixels
-                    .chunks_exact(4)
-                    .flat_map(|rg| {
-                        let r = (u16::from_le_bytes([rg[0], rg[1]]) >> 8) as u8;
-                        let g = (u16::from_le_bytes([rg[2], rg[3]]) >> 8) as u8;
-                        [r, r, r, g]
-                    })
-                    .collect(),
-                Format::R16G16B16 => image
-                    .pixels
-                    .chunks_exact(6)
-                    .flat_map(|rgb| {
-                        let r = (u16::from_le_bytes([rgb[0], rgb[1]]) >> 8) as u8;
-                        let g = (u16::from_le_bytes([rgb[2], rgb[3]]) >> 8) as u8;
-                        let b = (u16::from_le_bytes([rgb[4], rgb[5]]) >> 8) as u8;
-                        [r, g, b, 255]
-                    })
-                    .collect(),
-                Format::R16G16B16A16 => image
-                    .pixels
-                    .chunks_exact(8)
-                    .flat_map(|rgba| {
-                        let r = (u16::from_le_bytes([rgba[0], rgba[1]]) >> 8) as u8;
-                        let g = (u16::from_le_bytes([rgba[2], rgba[3]]) >> 8) as u8;
-                        let b = (u16::from_le_bytes([rgba[4], rgba[5]]) >> 8) as u8;
-                        let a = (u16::from_le_bytes([rgba[6], rgba[7]]) >> 8) as u8;
-                        [r, g, b, a]
-                    })
-                    .collect(),
+                // data is guaranteed to be little-endian in glTF, so from_le_bytes isn't needed
+                Format::R16 => rgba.extend(
+                    image
+                        .pixels
+                        .chunks_exact(2)
+                        .flat_map(|r| [r[1], r[1], r[1], 255]),
+                ),
+                Format::R16G16 => rgba.extend(
+                    image
+                        .pixels
+                        .chunks_exact(4)
+                        .flat_map(|rg| [rg[1], rg[3], 0, 255]),
+                ),
+                Format::R16G16B16 => rgba.extend(
+                    image
+                        .pixels
+                        .chunks_exact(6)
+                        .flat_map(|rgb| [rgb[1], rgb[3], rgb[5], 255]),
+                ),
+                Format::R16G16B16A16 => rgba.extend(
+                    image
+                        .pixels
+                        .chunks_exact(8)
+                        .flat_map(|rgba| [rgba[1], rgba[3], rgba[5], rgba[7]]),
+                ),
                 _ => {
                     log::warn!(
                         "Unsupported image format {:?}, using fallback opaque white texture",
                         image.format
                     );
-                    vec![255; (image.width * image.height * 4) as usize]
+                    rgba.extend(vec![255; (image.width * image.height * 4) as usize]);
                 }
-            };
+            }
 
             // converting base color textures from sRGB to linear; only base color textures are sRGB in glTF, which needs conversion
             // https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#metallic-roughness-material
@@ -385,27 +376,27 @@ impl Scene {
             image_uvs.insert(img_idx, (layer_idx as i32, uv_offset_scale));
         }
 
-        // helper to fetch mapping bounds from dictionary
-        fn get_layer_and_uv(
-            img_idx_opt: Option<usize>,
-            image_uvs: &std::collections::HashMap<usize, (i32, glam::Vec4)>,
-        ) -> (i32, glam::Vec4) {
+        // helper closure to fetch mapping bounds from dictionary
+        let get_layer_and_uv = |img_idx_opt: Option<usize>| -> (i32, glam::Vec4) {
             img_idx_opt
                 .and_then(|idx| image_uvs.get(&idx).copied())
                 .unwrap_or((-1, glam::Vec4::ZERO)) // return -1 layer if no texture attached
+        };
+
+        // collect root nodes to begin traversal
+        let root_nodes = document.default_scene().map_or_else(
+            || document.nodes().collect::<Vec<_>>(),
+            |scene| scene.nodes().collect::<Vec<_>>(),
+        );
+
+        // initialize the stack for iterative node processing
+        let mut stack = Vec::new();
+        for node in root_nodes {
+            stack.push((node, glam::Mat4::IDENTITY));
         }
 
-        // recursive helper to process all nodes and their children
-        fn process_node_recursive(
-            node: &gltf::scene::Node,
-            parent_mat: glam::Mat4,
-            buffers: &[gltf::buffer::Data],
-            image_uvs: &std::collections::HashMap<usize, (i32, glam::Vec4)>,
-            geometries: &mut Vec<GpuTriangleGeometry>,
-            attributes: &mut Vec<GpuTriangleAttribute>,
-            materials: &mut Vec<GpuMaterial>,
-            prim_infos: &mut Vec<PrimitiveInfo>,
-        ) {
+        // iteratively process all nodes
+        while let Some((node, parent_mat)) = stack.pop() {
             // compute this node's transform matrix
             let local_mat = match node.transform() {
                 gltf::scene::Transform::Matrix { matrix } => {
@@ -423,12 +414,13 @@ impl Scene {
             };
 
             let model_mat = parent_mat * local_mat;
-            let normal_mat = model_mat.inverse().transpose();
 
             // get the mesh data if this node references a mesh
             if let Some(mesh) = node.mesh() {
+                // only invert/transpose the matrix if the node actually has geometry
+                let normal_mat = model_mat.inverse().transpose();
+
                 // primitives are the only useful data in a gltf::Mesh for this renderer
-                // usually there's only one primitive for a mesh
                 for primitive in mesh.primitives() {
                     // only process the primitive if it's triangles
                     if primitive.mode() == gltf::mesh::Mode::Triangles {
@@ -437,9 +429,8 @@ impl Scene {
                             primitive.reader(|buffer| Some(&buffers[buffer.index()].0[..]));
 
                         let positions: Vec<glam::Vec3> = match reader.read_positions() {
-                            // type annotation necessary
-                            Some(it) => it.map(glam::Vec3::from_array).collect(), // collect the iterator
-                            None => continue, // if there are no positions (vertex positions), skip this primitive
+                            Some(it) => it.map(glam::Vec3::from_array).collect(),
+                            None => continue, // if there are no vertex positions, skip this primitive
                         };
 
                         let normals = reader.read_normals().map_or_else(
@@ -469,21 +460,18 @@ impl Scene {
 
                         let (base_color_tex_layer, base_color_uv) = get_layer_and_uv(
                             pbr.base_color_texture()
-                                .map(|t| t.texture().source().index()), // this index should match the image's index from images.iter().enumerate(), which is a key in image_uvs
-                            image_uvs,
+                                .map(|t| t.texture().source().index()),
                         );
 
                         let (metallic_roughness_tex_layer, metallic_roughness_uv) =
                             get_layer_and_uv(
                                 pbr.metallic_roughness_texture()
                                     .map(|t| t.texture().source().index()),
-                                image_uvs,
                             );
 
                         let norm_tex = mat.normal_texture();
                         let (normal_tex_layer, normal_uv) = get_layer_and_uv(
                             norm_tex.as_ref().map(|t| t.texture().source().index()),
-                            image_uvs,
                         );
 
                         materials.push(GpuMaterial {
@@ -495,7 +483,7 @@ impl Scene {
                                 mat.emissive_factor()[0],
                                 mat.emissive_factor()[1],
                                 mat.emissive_factor()[2],
-                                mat.emissive_strength().unwrap_or_default(),
+                                mat.emissive_strength().unwrap_or(1.0),
                             ),
                             base_color_tex_layer,
                             normal_scale: norm_tex.map_or(1.0, |t| t.scale()),
@@ -545,32 +533,8 @@ impl Scene {
                 }
             }
 
-            // recursively process all child nodes
-            for child in node.children() {
-                process_node_recursive(
-                    &child, model_mat, buffers, image_uvs, geometries, attributes, materials,
-                    prim_infos,
-                );
-            }
-        }
-
-        // collect meshes referenced by nodes (including all children)
-        let root_nodes = document.default_scene().map_or_else(
-            || document.nodes().collect::<Vec<_>>(),
-            |scene| scene.nodes().collect::<Vec<_>>(),
-        );
-
-        for node in root_nodes {
-            process_node_recursive(
-                &node,
-                glam::Mat4::IDENTITY,
-                &buffers,
-                &image_uvs,
-                &mut geometries,
-                &mut attributes,
-                &mut materials,
-                &mut prim_infos,
-            );
+            // push all children to the stack to be processed next
+            stack.extend(node.children().map(|child| (child, model_mat)));
         }
 
         let mut bvh_nodes = vec![GpuBvhNode {
@@ -614,19 +578,6 @@ impl Scene {
         let scene_center = (root_aabb.aabb_min + root_aabb.aabb_max) * 0.5;
         let scene_height = root_aabb.aabb_max.y - root_aabb.aabb_min.y;
 
-        #[cfg(all(feature = "testing", not(target_arch = "wasm32")))]
-        {
-            // save atlases for testing
-            for (idx, atlas) in atlases.iter().enumerate() {
-                Self::save_rgba_image(
-                    &format!("atlas_{idx}.png"),
-                    &atlas.pixels,
-                    ATLAS_SIZE as u32,
-                    ATLAS_SIZE as u32,
-                );
-            }
-        }
-
         let scene = Self {
             geometries,
             attributes,
@@ -650,12 +601,17 @@ impl Scene {
         };
 
         #[cfg(all(feature = "testing", not(target_arch = "wasm32")))]
-        scene.save_scene_data_json();
-
-        log::info!(
-            "Finished full scene construction in {:?}",
-            scene_parsing_start.elapsed()
-        );
+        {
+            for (idx, pixels) in scene.texture_atlases.iter().enumerate() {
+                Self::save_rgba_image(
+                    &format!("atlas_{idx}.png"),
+                    pixels,
+                    ATLAS_SIZE as u32,
+                    ATLAS_SIZE as u32,
+                );
+            }
+            scene.save_scene_data_json();
+        }
 
         Ok(scene)
     }

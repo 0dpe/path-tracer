@@ -17,6 +17,13 @@ path = "src/main.rs"
 [features]
 testing = ["dep:image", "dep:serde", "dep:serde_yaml"]
 
+[[bench]]
+name = "scene_bench"
+harness = false
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+criterion = "0.8.2"
+
 [dependencies]
 wgpu = "29.0.3"
 winit = "0.30.13"

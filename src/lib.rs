@@ -1,4 +1,4 @@
-mod render;
+pub mod render; // pub just for the benchmark
 mod utils;
 
 use render::state::State;
