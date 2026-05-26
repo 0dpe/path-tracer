@@ -3,8 +3,8 @@
 
 /// The name of the glTF file to load from the [`assets/`](https://github.com/0dpe/path-tracer/tree/main/assets) directory to render.
 /// Can be exported from Blender.
-/// ![Export glTF from Blender 1](https://raw.githubusercontent.com/0dpe/path-tracer/refs/heads/main/docs/blender_export_gltf_1.jpg)
-/// ![Export glTF from Blender 2](https://raw.githubusercontent.com/0dpe/path-tracer/refs/heads/main/docs/blender_export_gltf_2.jpg)
+/// ![Export glTF from Blender 1](https://raw.githubusercontent.com/0dpe/path-tracer/main/doc/blender_export_gltf_1.jpg)
+/// ![Export glTF from Blender 2](https://raw.githubusercontent.com/0dpe/path-tracer/main/doc/blender_export_gltf_2.jpg)
 pub const GLTF: &str = "cornell_custom.glb";
 
 use super::scene;

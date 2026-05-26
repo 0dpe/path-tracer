@@ -1,11 +1,11 @@
 # [path-tracer](https://0dpe.github.io/path-tracer/)
 
 <p align="center">
-    <img src="https://raw.githubusercontent.com/0dpe/path-tracer/refs/heads/main/docs/cornell_torus.jpg" height="200em">
-    <img src="https://raw.githubusercontent.com/0dpe/path-tracer/refs/heads/main/docs/cornell_torus.jpg" height="200em">
+    <img src="https://raw.githubusercontent.com/0dpe/path-tracer/main/doc/cornell.jpg" height="200em">
+    <img src="https://raw.githubusercontent.com/0dpe/path-tracer/main/doc/cornell_torus.jpg" height="200em">
 </p>
 <p align="center">
-    <img src="https://raw.githubusercontent.com/0dpe/path-tracer/refs/heads/main/docs/infinite_mirrors.jpg" height="180em">
+    <img src="https://raw.githubusercontent.com/0dpe/path-tracer/main/doc/infinite_mirrors.jpg" height="180em">
 </p>
 
 A **demo** real-time 3D path tracer built with WebGPU (wgpu) and Rust. Runs natively on Windows, macOS, and Linux, and in web browsers from the same codebase.
