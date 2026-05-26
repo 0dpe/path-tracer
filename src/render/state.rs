@@ -445,7 +445,7 @@ impl State {
 
         // load and parse a glTF 2.0 file
         let mut scene = scene::Scene::new(&format!("assets/{}", GLTF)).await?;
-        scene.move_camera_to(glam::Vec3::new(-8.0, 0.0, 6.0));
+        scene.move_camera_to(glam::Vec3::new(0.0, 0.0, 6.0));
 
         const ATLAS_SIZE: u32 = scene::ATLAS_SIZE as u32;
 
