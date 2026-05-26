@@ -447,6 +447,10 @@ impl State {
         let mut scene = scene::Scene::new(&format!("assets/{}", GLTF)).await?;
         scene.move_camera_to(glam::Vec3::new(0.0, 0.0, 6.0));
 
+        // for dragon.glb:
+        // scene.move_camera_to(glam::Vec3::new(-4.0, 0.2, 0.0));
+        // scene.rotate_camera_to(-std::f32::consts::FRAC_PI_2, 0.0);
+
         const ATLAS_SIZE: u32 = scene::ATLAS_SIZE as u32;
 
         // create texture array from atlases

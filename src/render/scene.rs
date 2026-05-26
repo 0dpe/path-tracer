@@ -1062,7 +1062,7 @@ impl Scene {
             .clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2);
     }
 
-    /// Instantly rotate the camera to specific yaw and pitch angles, ignoring mouse movement. Useful for teleporting or resetting the camera orientation.
+    /// Instantly rotate the camera to specific yaw and pitch angles (in radians), ignoring mouse movement. Useful for teleporting or resetting the camera orientation.
     pub fn rotate_camera_to(&mut self, yaw: f32, pitch: f32) {
         self.camera.yaw = yaw;
         self.camera.pitch = pitch;
