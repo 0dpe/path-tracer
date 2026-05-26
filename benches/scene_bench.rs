@@ -3,9 +3,9 @@ use path_tracer::render::scene::Scene;
 use std::hint::black_box;
 
 fn benchmark_scene_loading(c: &mut Criterion) {
-    c.bench_function("scene_new_dorm", |b| {
+    c.bench_function("scene_new_dorm_light", |b| {
         b.iter(|| {
-            pollster::block_on(Scene::new(black_box("assets/dorm.glb")))
+            pollster::block_on(Scene::new(black_box("assets/dorm_light.glb")))
                 .expect("Failed to load scene")
         });
     });

@@ -1,64 +1,65 @@
 # [path-tracer](https://0dpe.github.io/path-tracer/)
 
-A cross-platform **demo** GPU ray tracer built with Rust and WebGPU, demonstrating modern GPU programming techniques. Runs natively on Windows, macOS, and Linux, as well as in web browsers from the same codebase.
+<p align="center">
+    <img src="https://raw.githubusercontent.com/0dpe/path-tracer/refs/heads/main/docs/cornell_torus.jpg" height="200em">
+    <img src="https://raw.githubusercontent.com/0dpe/path-tracer/refs/heads/main/docs/cornell_torus.jpg" height="200em">
+</p>
+<p align="center">
+    <img src="https://raw.githubusercontent.com/0dpe/path-tracer/refs/heads/main/docs/infinite_mirrors.jpg" height="180em">
+</p>
 
-## What It Does
+A **demo** real-time 3D path tracer built with WebGPU (wgpu) and Rust. Runs natively on Windows, macOS, and Linux, and in web browsers from the same codebase.
 
-This is a real-time GPU ray tracer that:
+## Features
 
-* Renders 3D scenes loaded from glTF (.glb) files (tested with Blender exported files)
-* Runs the same Rust codebase natively (desktop) and on the web (via WebAssembly)
-* Uses compute shaders for ray-triangle intersection (Möller-Trumbore algorithm)
+* Renders 3D scenes loaded from glTF 2.0 (.glb) files
+* Uses a WGSL compute shader for tracing light paths
 * Handles first-person camera controls with keyboard and mouse input
-* Demonstrates core WebGPU (wgpu) concepts: bind groups, compute/vertex/fragment pipelines, WGSL compute/vertex/fragment shaders, storage textures, etc.
+* Runs from the same Rust codebase natively and on the web (via WebAssembly)
 
-**Current Status**: This is a basic ray tracer skeleton. It traces primary rays only and lacks features like recursive path tracing or acceleration structures (BVH).
+**Current Status**: This is a basic path tracer skeleton. It only supports basic scenes (transparent materials are not implemented yet).
 
 ## Build & Run
 
-### Prerequisites
+Install [Rust](https://rustup.rs/ "rustup") and clone this repository:
 
-1. Install [Rust](https://rustup.rs/)
-2. For web builds, install wasm-pack:
-
-   ```bash
-   cargo install wasm-pack
-   ```
-
-3. For web hosting on localhost, use Python's built-in server or install simple-http-server:
-
-   ```bash
-   cargo install simple-http-server
-   ```
+```bash
+git clone https://github.com/0dpe/path-tracer.git
+cd path-tracer
+```
 
 ### Native (Desktop)
 
+Simply run:
+
 ```bash
-git clone https://github.com/0dpe/path-tracer.git
-cd path-tracer
 cargo rr
 ```
 
-**Controls**: Left click the window, then use <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> + <kbd>Left Shift</kbd>/<kbd>Space</kbd> to move, mouse to look around. Press <kbd>Esc</kbd> or click again to release cursor.
+**Controls**: Left click the window, then use <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> + <kbd>Left Shift</kbd>/<kbd>Space</kbd> to move, mouse to look around. Press <kbd>Esc</kbd> or click again to release the cursor.
 
 ### Web (Browser)
 
-```bash
-git clone https://github.com/0dpe/path-tracer.git
-cd path-tracer
-wasm-pack build --target web
+Install wasm-pack and build:
 
-# serve the folder
-simple-http-server
-# Or: python -m http.server 8000
+```bash
+cargo install wasm-pack
+wasm-pack build --target web
 ```
 
-Open Chrome at `http://localhost:8000` and click on `index.html`. Same controls as native.
+To start a server on localhost, use Python's built-in server `python -m http.server` or install simple-http-server, and then start hosting:
+
+```bash
+cargo install simple-http-server
+simple-http-server
+```
+
+Open a browser, go to `http://localhost:8000`, and click on `index.html`. Same controls as on native.
 
 > [!NOTE]
 > Requires a browser with WebGPU [support](https://github.com/gpuweb/gpuweb/wiki/Implementation-Status "WebGPU Implementation Status") (Chrome 113+, Safari 26+, Firefox 145+).
 
-## General Crate Structure
+## Main Crate Structure
 
 ```text
 path-tracer/
@@ -68,22 +69,13 @@ path-tracer/
 │   ├── render/          # WebGPU setup, shaders, scene loading
 │   ├── lib.rs           # Window management and event loop
 │   └── main.rs          # Native entry point
-├── Cargo.toml           # Dependencies including wgpu version
+├── Cargo.toml           # Dependencies, features, benches
 └── index.html           # Webpage
 ```
 
-## Why WebGPU?
+## Development
 
-GPU programming offers massive parallelism for graphics and compute workloads, but has historically been fragmented across incompatible APIs:
-
-* **OpenGL**: Relatively old, high-level and opaque 
-* **DirectX**: Windows-only
-* **Metal**: Apple platforms only
-* **Vulkan**: Verbose, complex to learn
-* **CUDA & OpenCL**: Compute-focused, vendor-specific or limited adoption
-
-Unlike CPU code that runs anywhere with minimal changes, GPU code has traditionally required developers to choose between portability, modern features, and accessibility.
-
-WebGPU is a solution. It's a modern, cross-platform GPU API that provides a single interface across major platforms and browsers. WebGPU maps efficiently to DirectX 12, Metal, and Vulkan without significantly sacrificing performance. The W3C WebGPU spec reached a Candidate Recommendation Draft in 2025.
-
-This project demonstrates WebGPU capabilities using **wgpu** (the Rust implementation) and serves as a practical demo for modern GPU programming.
+* `cargo c`: Run Clippy for linting.
+* `cargo t`: Run with `testing` feature enabled. With `testing`, more debug information is outputted during running (which may significantly worsen performance). Debug information are saved in `debug_output/`, which is gitignored. `testing` feature is only supported on native, since files are saved to disk.
+* `cargo bench --bench desired_bench`: Run a benchmark (available benchmarks are the filenames listed in [`benches/`](https://github.com/0dpe/path-tracer/tree/main/benches)). Criterion is used; view the detailed benchmark reports at `target/criterion/report/index.html`.
+* `cargo doc --open --document-private-items --target wasm32-unknown-unknown`: Generate and view the documentation. The [`doc/`](https://github.com/0dpe/path-tracer/tree/main/doc) folder just includes images used in the generated documentation.

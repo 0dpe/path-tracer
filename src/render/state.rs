@@ -1,45 +1,81 @@
+//! Define the [`State`] struct, which encapsulates all the GPU resources, scene data, and application state needed for rendering.
+//! Includes methods for initializing these resources and handling events from the window.
+
+/// The name of the glTF file to load from the [`assets/`](https://github.com/0dpe/path-tracer/tree/main/assets) directory to render.
+/// Can be exported from Blender.
+/// ![Export glTF from Blender 1](https://raw.githubusercontent.com/0dpe/path-tracer/refs/heads/main/docs/blender_export_gltf_1.jpg)
+/// ![Export glTF from Blender 2](https://raw.githubusercontent.com/0dpe/path-tracer/refs/heads/main/docs/blender_export_gltf_2.jpg)
+pub const GLTF: &str = "cornell_custom.glb";
+
 use super::scene;
 
+/// Encapsulates all the GPU resources, scene data, and applaction state.
 pub struct State {
-    surface: wgpu::Surface<'static>, // window for rendering onto
-    surface_config: wgpu::SurfaceConfiguration, // describes a Surface
-    device: wgpu::Device,            // connection to GPU
-    queue: wgpu::Queue,              // executes recorded CommandBuffer objects
+    /// The surface represents the platform-specific window or canvas that will be rendered onto.
+    surface: wgpu::Surface<'static>,
+    /// Describes the configuration of the surface, including format, size, etc. Needed for configuring the surface and recreating it on resize.
+    surface_config: wgpu::SurfaceConfiguration,
+    /// Represents a logical connection to the GPU and is used to create all other GPU resources.
+    device: wgpu::Device,
+    /// Used to execute recorded [`wgpu::CommandBuffer`] objects.
+    queue: wgpu::Queue,
 
-    sampler: wgpu::Sampler, // defines how a pipeline will sample from a TextureView (like define filters)
+    /// Defines how the shader will sample from textures; used in both compute and render pipelines since they have the same filtering requirements.
+    sampler: wgpu::Sampler,
 
     // group 0 (dynamic)
+    /// Bind group for the compute shader, containing the storage texture and accumulation buffer that are written to by the compute shader.
     compute_texture_bind_group: wgpu::BindGroup,
+    /// Bind group for the render shader, containing the storage texture and sampler that are read from by the fragment shader.
     render_texture_bind_group: wgpu::BindGroup,
+    /// Bind group layout for [`Self::compute_texture_bind_group`], needed in [`State`] to recreate the bind group on window resizes.
     compute_texture_bind_group_layout: wgpu::BindGroupLayout,
+    /// Bind group layout for [`Self::render_texture_bind_group`], needed in [`State`] to recreate the bind group on window resizes.
     render_texture_bind_group_layout: wgpu::BindGroupLayout,
 
     // group 1 (static)
+    /// Bind group for the compute shader, containing the scene data. This bind group is static since the scene data doesn't change at runtime.
     compute_scene_bind_group: wgpu::BindGroup,
+    /// Buffer for the camera data, which is updated every frame. This is a separate buffer from the scene data buffers since it's updated at a different frequency.
     camera_buffer: wgpu::Buffer,
 
-    compute_pipeline: wgpu::ComputePipeline, // compute pipeline, for all calculations
-    render_pipeline: wgpu::RenderPipeline,   // render pipeline, just for full screen triangle
+    /// Runs the compute shader to perform path tracing calculations and write to the storage texture.
+    compute_pipeline: wgpu::ComputePipeline,
+    /// Runs the vertex and fragment shaders to render a full-screen triangle that samples from the storage texture and outputs to the surface.
+    render_pipeline: wgpu::RenderPipeline,
 
-    scene: scene::Scene, // contains camera, triangles, materials, methods to move the camera, etc.
+    /// Contains all data about the 3D scene.
+    scene: scene::Scene,
 
-    camera_dirty: bool, // to prevent duplicate GPU writes since multiple things can request camera movement
+    /// Set of currently pressed keys, used for camera movement.
+    pressed_keys: std::collections::HashSet<winit::keyboard::KeyCode>,
+    /// Tracks the current cursor grab mode, used for controlling whether the cursor is captured for camera rotation or not.
+    cursor_grab: winit::window::CursorGrabMode,
 
-    pressed_keys: std::collections::HashSet<winit::keyboard::KeyCode>, // keyboard keys currently pressed
-    cursor_grab: winit::window::CursorGrabMode, // whether the cursor is currently grabbed
+    /// The time of the last update, used for calculating delta time (dt) for movement speed scaling and tracking FPS.
+    /// Using [`web_time::Instant`] which is a cross-platform abstraction over [`std::time::Instant`] that works on both native and web targets.
+    last_instant: web_time::Instant,
 
-    last_instant: web_time::Instant, // time of last update for dt calculation for movement speed scaling
-
-    fps_timer: f32,   // accumulates dt
-    fps_counter: u32, // counts frames within the current interval
+    /// FPS tracking.
+    fps_timer: f32,
+    /// FPS tracking.
+    fps_counter: u32,
+    /// FPS tracking.
     current_fps: u32, // the stored FPS value; not necessary to be stored in the struct right now, but for display FPS in the UI, having it here would make that possible
 
-    pub window: std::sync::Arc<winit::window::Window>, // represents a window
+    /// Tracks the number of frames rendered since the last camera movement or window resize.
+    /// Used for accumulation in the compute shader, where the shader can use this count to determine how many frames have been accumulated so far and adjust its calculations accordingly.
+    frame_count: u32,
+
+    /// The winit window.
+    pub window: std::sync::Arc<winit::window::Window>,
 }
 
+/// Create or recreate the storage texture, accumulation buffer, and their corresponding bind groups for both compute and render pipelines.
+/// Called on window resizes since the surface size changes.
+/// Returns the compute and render bind groups, respectively, as a tuple.
 // private helper function, not a method inside the impl because new() calls it
 // called in both State's new() and resize()
-// returns (compute bind group, render bind group)
 fn create_texture_bind_groups(
     device: &wgpu::Device,
     sampler: &wgpu::Sampler,
@@ -72,14 +108,31 @@ fn create_texture_bind_groups(
             ..Default::default()
         });
 
+    // create the accumulation buffer (16 bytes per pixel for vec4<f32>)
+    // this is actually used as a texture, but since textures cannot be both read and write, a storage buffer is used instead
+    let accumulation_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Accumulation buffer"),
+        size: wgpu::BufferAddress::from(texture_size.0 * texture_size.1 * 16),
+        usage: wgpu::BufferUsages::STORAGE,
+        mapped_at_creation: false,
+    });
+
     (
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Compute texture bind group"),
             layout: compute_texture_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0, // matches with shader.wgsl @binding(0)
-                resource: wgpu::BindingResource::TextureView(&storage_texture_view),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0, // matches with shader.wgsl @binding(0)
+                    resource: wgpu::BindingResource::TextureView(&storage_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1, // matches with shader.wgsl @binding(1)
+                    resource: wgpu::BindingResource::Buffer(
+                        accumulation_buffer.as_entire_buffer_binding(),
+                    ),
+                },
+            ],
         }),
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Render texture bind group"),
@@ -99,6 +152,7 @@ fn create_texture_bind_groups(
 }
 
 impl State {
+    /// Asynchronously create a new [`State`] by initializing all GPU resources, loading the scene, and preparing the bind groups and pipelines.
     pub async fn new(
         window: std::sync::Arc<winit::window::Window>,
         display_handle: winit::event_loop::OwnedDisplayHandle,
@@ -187,7 +241,7 @@ impl State {
             ..Default::default()
         });
 
-        // group 0: the storage texture for compute shader
+        // group 0: the storage texture for compute shader and the accumulation buffer
         let compute_texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Compute texture bind group layout"),
@@ -202,6 +256,17 @@ impl State {
                             access: wgpu::StorageTextureAccess::WriteOnly,
                             format: wgpu::TextureFormat::Rgba16Float, // linear gamma
                             view_dimension: wgpu::TextureViewDimension::D2,
+                        },
+                        count: None,
+                    },
+                    // accumulation buffer
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
                         },
                         count: None,
                     },
@@ -379,7 +444,8 @@ impl State {
         });
 
         // load and parse a glTF 2.0 file
-        let scene = scene::Scene::new("assets/dorm.glb").await?;
+        let mut scene = scene::Scene::new(&format!("assets/{}", GLTF)).await?;
+        scene.move_camera_to(glam::Vec3::new(-8.0, 0.0, 6.0));
 
         const ATLAS_SIZE: u32 = scene::ATLAS_SIZE as u32;
 
@@ -426,7 +492,7 @@ impl State {
             );
         }
 
-        let gpu_camera = scene.prepare_gpu_camera();
+        let gpu_camera = scene.prepare_gpu_camera(0);
 
         use wgpu::util::DeviceExt; // for create_buffer_init
 
@@ -527,8 +593,6 @@ impl State {
 
             scene,
 
-            camera_dirty: false,
-
             pressed_keys: std::collections::HashSet::new(),
             cursor_grab: winit::window::CursorGrabMode::None,
 
@@ -538,10 +602,14 @@ impl State {
             fps_counter: 0,
             current_fps: 0,
 
+            frame_count: 0,
+
             window,
         })
     }
 
+    /// Handle window resizes by reconfiguring the surface and recreating the storage texture, accumulation buffer, and their corresponding bind groups to match the new surface size.
+    /// Changes the camera aspect ratio and resets the frame count for accumulation.
     pub fn resize(&mut self, width: u32, height: u32) {
         log::info!("Called: resize {width}x{height}");
 
@@ -565,7 +633,7 @@ impl State {
 
             self.scene
                 .resize_camera_aspect_ratio(width as f32, height as f32);
-            self.camera_dirty = true;
+            self.frame_count = 0;
 
             // on initial window creation on MacOS, and sometimes on initial web page load, even though resize is called, render isn't called afterwards
             // so, force a render call here
@@ -573,6 +641,7 @@ impl State {
         }
     }
 
+    /// Called every frame in a loop to update the application state and perform rendering.
     pub fn update(&mut self) {
         let dt = self.last_instant.elapsed().as_secs_f32();
         self.last_instant = web_time::Instant::now();
@@ -589,17 +658,18 @@ impl State {
         }
 
         if self.scene.move_camera(&self.pressed_keys, dt, dt) {
-            self.camera_dirty = true;
+            self.frame_count = 0; // reset frame count for accumulation when the camera moves
         }
 
-        if self.camera_dirty {
-            self.queue.write_buffer(
-                &self.camera_buffer,
-                0,
-                bytemuck::bytes_of(&self.scene.prepare_gpu_camera()),
-            );
-            self.camera_dirty = false;
-        }
+        self.frame_count += 1; // note that frame_count is incremented every frame no matter if any camera movement has ocurred
+        // so only when frame_count > 1 will the compute shader write to the accumulation buffer (the initial frame needs to overwrite the accumulation buffer instead of accumulating with a nonexistant previous frame)
+
+        // update camera buffer every frame since even if the camera isn't moving, the frame count is still increasing for accumulation
+        self.queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::bytes_of(&self.scene.prepare_gpu_camera(self.frame_count)),
+        );
 
         match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => {
@@ -685,6 +755,7 @@ impl State {
         self.window.request_redraw();
     }
 
+    /// Handle keyboard input events to update the set of currently pressed keys and toggle cursor grab mode when the Escape key is released.
     pub fn key_event(&mut self, key_event: &winit::event::KeyEvent) {
         // ignore when the OS or browser generates multiple presses and releases while a key is held down
         if !key_event.repeat
@@ -707,15 +778,17 @@ impl State {
         }
     }
 
+    /// Handle mouse movement events to rotate the camera when the cursor is locked, and reset the frame count for accumulation when the camera moves.
     pub fn mouse_move_event(&mut self, delta: (f64, f64)) {
         if self.cursor_grab == winit::window::CursorGrabMode::Locked {
             let (dx, dy) = (delta.0 as f32, delta.1 as f32);
 
             self.scene.rotate_camera(dx, dy, 0.003, 0.003);
-            self.camera_dirty = true;
+            self.frame_count = 0; // reset frame count for accumulation when the camera moves
         }
     }
 
+    /// Handle mouse button input events to toggle cursor grab mode when the left mouse button is released.
     pub fn mouse_button_event(
         &mut self,
         state: winit::event::ElementState,
@@ -728,6 +801,7 @@ impl State {
         }
     }
 
+    /// Toggle cursor grab mode between locked and none.
     // on wasm, set_cursor_grab() and set_cursor_visible() seem to work most of the time
     // also, on wasm, the escape key is sometimes not received by winit since the browser thinks the webpage is in full screen, so the browser handles the escape
     // however, clicking works on wasm, so left click can be used to exit

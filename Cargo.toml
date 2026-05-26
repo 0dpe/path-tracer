@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Demo Rust wgpu interactive path tracer."
 repository = "https://github.com/0dpe/path-tracer"
+readme = "README.md"
 license = "MIT"
 
 [lib]
@@ -27,7 +28,7 @@ criterion = "0.8.2"
 [dependencies]
 wgpu = "29.0.3"
 winit = "0.30.13"
-log = "0.4.29"
+log = "0.4.30"
 gltf = { version = "1.4.1", features = [
     "KHR_materials_specular",
     "KHR_materials_emissive_strength",
@@ -50,4 +51,6 @@ env_logger = "0.11.10"
 pollster = "0.4.0"
 image = { version = "0.25.10", optional = true }
 serde = { version = "1.0.228", optional = true, features = ["derive"] }
-serde-saphyr = { version = "0.0.26", default-features = false, features = ["serialize"], optional = true }
+serde-saphyr = { version = "0.0.26", default-features = false, features = [
+    "serialize",
+], optional = true }

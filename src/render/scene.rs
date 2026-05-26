@@ -1,37 +1,55 @@
+//! Load and format a .glb glTF 2.0 file for passing to the GPU.
 // this module is only used by state.rs
-// load a .glb glTF 2.0 file and format the data
 // on both native and wasm, loading is at runtime
 // this allows the glTF file to change without having to rebuild the WASM
 
-pub const ATLAS_SIZE: i32 = 8192; // 8192 is the default of wgpu::limits::max_texture_dimension_2d 
-// TODO: set atlas size dynamically; if one atlas is enough, use a smaller atlas size; if multiple are needed, use 8192
-// TODO: fix transparency in textures; parsing is done correctly, but shader is not correct. also, in gltf::material, parse alpha_mode and alpha_cutoff to do this properly
-// TODO: implement gltf::material double_sided and do backface culling conditionally
-// TODO: add parsing of emissive textures
+/// 8192 is the default value of [`wgpu::Limits::max_texture_dimension_2d`].
+/// Since passing an array of images with different sizes isn't supported universally,
+/// images are packed into atlases which are larger square images that store multiple smaller images.
+/// Then, an array of atlases are passed to the GPU without problems.
+pub const ATLAS_SIZE: i32 = 8192;
 
+// TODO: set atlas size dynamically; if one atlas is enough, use a smaller atlas size; if multiple are needed, use 8192
+
+// TODO: fix transparency in textures; parsing is done correctly, but shader is not correct. also, in gltf::material, parse alpha_mode and alpha_cutoff to do this properly
+// TODO: textures are messed up with sponza https://github.com/ludicon/sponza-gltf
+// TODO: test against the sample glTF
+
+/// Contains all the data loaded from a glTF file and formatted for the GPU.
 #[derive(Debug)]
 pub struct Scene {
+    // geometries[i] and attributes[i] together represent a triangle primitive at index i
+    // hence, only GpuTriangleAttribute contains material index (geometries doesn't contain any index)
     pub geometries: Vec<GpuTriangleGeometry>,
     pub attributes: Vec<GpuTriangleAttribute>,
     pub materials: Vec<GpuMaterial>,
     pub bvh_nodes: Vec<GpuBvhNode>,
+    /// Each texture atlas is a RGBA8 image (stored as a `Vec<u8>`) that contains multiple smaller textures packed together;
+    /// the shader uses an index into the array of texture atlases, the UV offset, and scale to access the correct atlas, then the correct portion of that atlas for each material.
     pub texture_atlases: Vec<Vec<u8>>,
     camera: Camera,
 }
 
+/// Used for keeping track of camera data internally; not passed to the GPU.
+/// See [`GpuCamera`] for the struct that is passed to the GPU, which is converted from [`Camera`] with [`Scene::prepare_gpu_camera()`].
 #[derive(Debug)]
 struct Camera {
-    position: glam::Vec3, // camera position x, y, z in world space
-    // -Z into the screen, +Y up the screen, +X to the right of the screen
+    /// Camera position x, y, z in world space.
+    /// The coordiante system is: -z into the screen, +y up the screen, and +x to the right of the screen.
+    position: glam::Vec3,
     // focus distance is not needed since this is a pinhole camera; focus distance is implicitly 1
-    fov_y: f32,        // vertical fov in degrees
-    aspect_ratio: f32, // width/height of image plane
+    /// Vertical FOV in degrees.
+    fov_y: f32,
+    /// Width divided by height of the image plane.
+    aspect_ratio: f32,
     yaw: f32,
     pitch: f32,
-    movement_speeds: [f32; 2], // units per second
+    /// Movement speeds for horizontal and vertical movement, respectively, in units per second.
+    movement_speeds: [f32; 2],
 }
 
-// GpuTriangleGeometry and GpuTriangleAttribute are separate structs the shader fetches vertices much more frequently than normals
+/// Contains the positions of the three vertices of a triangle primative.
+// GpuTriangleGeometry and GpuTriangleAttribute are separate structs because the shader fetches vertices much more frequently than normals
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)] // Clone and Copy are required by Pod
 #[cfg_attr(
@@ -47,6 +65,7 @@ pub struct GpuTriangleGeometry {
     p2: glam::Vec3,
 }
 
+/// Contains the material index and vertex attributes of a triangle primitive.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[cfg_attr(
@@ -54,18 +73,31 @@ pub struct GpuTriangleGeometry {
     derive(serde::Serialize)
 )]
 pub struct GpuTriangleAttribute {
-    // points to the index of a GpuMaterial
+    /// Points to the index of a [`GpuMaterial`] in [`Scene::materials`]; indicates which material this triangle uses.
     // meshes are not passed to the GPU; instead, individual triangles themselves are passed
     // each triangle thus has a material index, which indicates which mesh the triangle is from
     index: u32,
+    /// Normal vector at vertex 0.
     n0: glam::Vec3,
+    /// Normal vector at vertex 1.
     n1: glam::Vec3,
+    /// Normal vector at vertex 2.
     n2: glam::Vec3,
+    /// UV vector at vertex 0.
     uv0: glam::Vec2,
+    /// UV vector at vertex 1.
     uv1: glam::Vec2,
+    /// UV vector at vertex 2.
     uv2: glam::Vec2,
+    /// Tangent vector at vertex 0.
+    t0: glam::Vec4,
+    /// Tangent vector at vertex 1.
+    t1: glam::Vec4,
+    /// Tangent vector at vertex 2.
+    t2: glam::Vec4,
 }
 
+/// Contains properties for one complete material.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[cfg_attr(
@@ -73,35 +105,56 @@ pub struct GpuTriangleAttribute {
     derive(serde::Serialize)
 )]
 pub struct GpuMaterial {
+    /// Base color factor in RGBA; applied to the base color texture if it exists. If no texture, the base color is just this factor.
     base_color_factor: glam::Vec4,
-    base_color_uv: glam::Vec4, // uvs have offset_x, offset_y, scale_x, scale_y
+    /// Offset (x, y) and scale (x, y) for the base color texture in an atlas; if no texture, this is zero and ignored in the shader.
+    base_color_uv: glam::Vec4,
+    /// Offset (x, y) and scale (x, y) for the normal texture in an atlas; if no texture, this is zero and ignored in the shader.
     normal_uv: glam::Vec4,
+    /// Offset (x, y) and scale (x, y) for the metallic-roughness texture in an atlas; if no texture, this is zero and ignored in the shader.
     metallic_roughness_uv: glam::Vec4,
-    emissive: glam::Vec4, // emissive color in rgb, then strength in the 4th value
-    base_color_tex_layer: i32, // index the array of texture atlases for this texture; -1 if no texture
+    /// Offset (x, y) and scale (x, y) for the emissive texture in an atlas; if no texture, this is zero and ignored in the shader.
+    emissive_uv: glam::Vec4,
+    /// Emissive color in RGB, and emissive strength in the 4th value; applied to the emissive texture if it exists. If no texture, the emissive color is just this factor.
+    emissive: glam::Vec4,
+    /// Index into the array of texture atlases for the base color texture; -1 if no texture.
+    base_color_tex_layer: i32,
+    /// Scale factor for the normal map.
     normal_scale: f32,
+    /// Index into the array of texture atlases for the normal texture; -1 if no texture.
     normal_tex_layer: i32,
+    /// Index into the array of texture atlases for the metallic-roughness texture; -1 if no texture.
     metallic_roughness_tex_layer: i32,
+    /// Index into the array of texture atlases for the emissive texture; -1 if no texture.
+    emissive_tex_layer: i32,
+    /// Metallic factor for the material.
     metallic_factor: f32,
+    /// Roughness factor for the material.
     roughness_factor: f32,
-    pad: [i32; 2],
+    /// Flag indicating if the material is double-sided; 0 for false, 1 for true.
+    double_sided: i32,
 }
 
-// if prim_count == 0, the node is an internal node, and left_first is the index of the left child node in the Vec<GpuBvhNode>
-// the right child is guaranteed to be immediately after left_first at left_first + 1
-// if prim_count > 0, the node is a leaf, and left_first is instead the starting offset into Vec<GpuTriangleGeometry>, where the primitives contained in this leaf node are at indices left_first to left_first + prim_count - 1
+/// A node in the BVH tree.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuBvhNode {
+    /// Axis-aligned bounding box's minimum of this node.
     aabb_min: glam::Vec3,
+    /// If this node is an internal node, this value is the index of the left child node in [`Scene::bvh_nodes`].
+    /// If this node is a leaf ([`Self::prim_count`] is not 0), this value is the starting offset into [`Scene::geometries`] for the primitives contained in this leaf.
     left_first: u32,
+    /// Axis-aligned bounding box's maximum of this node.
     aabb_max: glam::Vec3,
+    /// If this node is a leaf, this value is the number of primitives contained in this leaf.
+    /// If this node is an internal node, this value is 0 and [`Self::left_first`] is the index in [`Scene::bvh_nodes`] of this node's left child.
     prim_count: u32,
 }
 
+/// Contains camera data formatted for the GPU; obtained with [`Scene::prepare_gpu_camera()`].
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-/* although the 4th value of each Vec4 is unused, if having Vec3 with matching WGSL:
+/* although the 4th value of each Vec4 is unused except for position_and_frame_count, if having Vec3 with matching WGSL:
 struct GpuCamera {
     data: array<f32, 12>,
 };
@@ -110,13 +163,18 @@ Error: Global variable [5] 'camera' is invalid: Alignment requirements for addre
 Even putting #[repr(C, align(16))] on this struct does not work
 */
 pub struct GpuCamera {
-    position: glam::Vec4,          // camera position, same as in Camera
-    lower_left_corner: glam::Vec4, // lower-left pixel coordinate of image plane in world space
-    horizontal: glam::Vec4,        // vector that spans the full x of image plane in world space
-    vertical: glam::Vec4,          // vector that spans the full y of image plane in world space
+    /// Camera position and frame count in the 4th value.
+    /// When the camera moves, frame_count is reset to 0, which is used for accumulation.
+    position_and_frame_count: glam::Vec4,
+    /// Lower-left pixel coordinate of image plane in world space.
+    lower_left_corner: glam::Vec4,
+    /// Vector that spans the full x of image plane in world space.
+    horizontal: glam::Vec4,
+    /// Vector that spans the full y of image plane in world space.
+    vertical: glam::Vec4,
 }
 
-// internal BVH helper structs
+/// Internal BVH helper struct.
 #[derive(Clone, Copy, Debug)]
 struct Aabb {
     min: glam::Vec3,
@@ -143,13 +201,14 @@ impl Aabb {
         e.z.mul_add(e.x, e.x.mul_add(e.y, e.y * e.z)) // e.x * e.y + e.y * e.z + e.z * e.x, but using mul_add for better precision and performance
     }
 }
+/// Internal BVH helper struct.
 #[derive(Clone, Copy)]
 struct PrimitiveInfo {
     aabb: Aabb,
     centroid: glam::Vec3,
 }
 
-// private helper function used in new()
+/// Load a glTF file as bytes, either from the filesystem on native or over HTTP on web.
 // not included directly inside new because conditional compilation with variable scopes would get messy
 #[allow(clippy::unused_async)]
 async fn load_gltf_bytes(path: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -191,6 +250,7 @@ async fn load_gltf_bytes(path: &str) -> Result<Vec<u8>, Box<dyn std::error::Erro
 }
 
 impl Scene {
+    /// Load a glTF file from the given path and format it for the GPU.
     pub async fn new(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let (document, buffers, images) = gltf::import_slice(load_gltf_bytes(path).await?)?;
 
@@ -218,6 +278,7 @@ impl Scene {
         }
 
         // collect indices of images designated as sRGB (base color or emissive textures) per glTF spec
+        // only base color and emissive textures are sRGB in glTF
         let mut srgb_images = std::collections::HashSet::new();
         for material in document.materials() {
             if let Some(tex) = material.pbr_metallic_roughness().base_color_texture() {
@@ -242,7 +303,6 @@ impl Scene {
         let mut rgba = Vec::new(); // declare once to save performance
 
         // loop through each image
-        // if there are no images, this loop is skipped, and atlases just contains one empty ATLAS_SIZE RGBA texture, which is fine since the shader will check if the layer index is -1 and skip texturing in that case
         for (img_idx, image) in images.iter().enumerate() {
             rgba.clear();
 
@@ -303,8 +363,7 @@ impl Scene {
                 }
             }
 
-            // converting base color textures from sRGB to linear; only base color textures are sRGB in glTF, which needs conversion
-            // https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#metallic-roughness-material
+            // convert from sRGB to linear
             if srgb_images.contains(&img_idx) {
                 for pixel in rgba.chunks_exact_mut(4) {
                     pixel[0] = srgb_to_linear_lut[pixel[0] as usize];
@@ -314,8 +373,8 @@ impl Scene {
                 }
             }
 
-            #[cfg(all(feature = "testing", not(target_arch = "wasm32")))]
             // save parsed images for testing
+            #[cfg(all(feature = "testing", not(target_arch = "wasm32")))]
             Self::save_rgba_image(
                 &format!("parsed_image_{img_idx}.png"),
                 &rgba,
@@ -380,7 +439,7 @@ impl Scene {
         let get_layer_and_uv = |img_idx_opt: Option<usize>| -> (i32, glam::Vec4) {
             img_idx_opt
                 .and_then(|idx| image_uvs.get(&idx).copied())
-                .unwrap_or((-1, glam::Vec4::ZERO)) // return -1 layer if no texture attached
+                .unwrap_or((-1, glam::Vec4::ZERO)) // return -1 layer and zero UV if no texture attached
         };
 
         // collect root nodes to begin traversal
@@ -395,7 +454,17 @@ impl Scene {
             stack.push((node, glam::Mat4::IDENTITY));
         }
 
-        // iteratively process all nodes
+        // temporary vecs for processing each primitive; declared once here to save on performance of repeated allocations; these are cleared and reused for each primitive
+        let mut temp_positions = Vec::new();
+        let mut temp_normals = Vec::new();
+        let mut temp_tex_coords = Vec::new();
+        let mut temp_indices = Vec::new();
+        let mut temp_tangents = Vec::new();
+        // if tangents aren't provided, they need to be calculated; these vecs are used for that
+        let mut tan_acc = Vec::new();
+        let mut bitan_acc = Vec::new();
+
+        // iteratively process all nodes with a stack
         while let Some((node, parent_mat)) = stack.pop() {
             // compute this node's transform matrix
             let local_mat = match node.transform() {
@@ -428,30 +497,123 @@ impl Scene {
                         let reader =
                             primitive.reader(|buffer| Some(&buffers[buffer.index()].0[..]));
 
-                        let positions: Vec<glam::Vec3> = match reader.read_positions() {
-                            Some(it) => it.map(glam::Vec3::from_array).collect(),
-                            None => continue, // if there are no vertex positions, skip this primitive
-                        };
+                        temp_positions.clear();
+                        if let Some(it) = reader.read_positions() {
+                            temp_positions.extend(
+                                it.map(|p| model_mat.transform_point3(glam::Vec3::from_array(p))),
+                            );
+                        } else {
+                            continue;
+                        } // skip if no vertex positions
 
-                        let normals = reader.read_normals().map_or_else(
-                            || vec![glam::Vec3::Y; positions.len()],
-                            |it| it.map(glam::Vec3::from_array).collect(),
-                        );
+                        temp_normals.clear();
+                        if let Some(it) = reader.read_normals() {
+                            temp_normals.extend(it.map(|n| {
+                                normal_mat
+                                    .transform_vector3(glam::Vec3::from_array(n))
+                                    .normalize()
+                            }));
+                        } else {
+                            temp_normals.resize(
+                                temp_positions.len(),
+                                normal_mat.transform_vector3(glam::Vec3::Y).normalize(),
+                            );
+                        }
 
-                        let tex_coords: Vec<glam::Vec2> = reader.read_tex_coords(0).map_or_else(
-                            || vec![glam::Vec2::ZERO; positions.len()],
-                            |read_tex_coords| {
-                                read_tex_coords
-                                    .into_f32()
-                                    .map(glam::Vec2::from_array)
-                                    .collect()
-                            },
-                        ); // if there are no tex coords, use (0, 0) for all vertices
+                        temp_tex_coords.clear();
+                        if let Some(it) = reader.read_tex_coords(0) {
+                            temp_tex_coords.extend(it.into_f32().map(glam::Vec2::from_array));
+                        } else {
+                            temp_tex_coords.resize(temp_positions.len(), glam::Vec2::ZERO);
+                        } // if there are no tex coords, use (0, 0) for all vertices
 
-                        let indices: Vec<u32> = reader.read_indices().map_or_else(
-                            || (0u32..positions.len() as u32).collect(),
-                            |read_indices| read_indices.into_u32().collect(),
-                        );
+                        temp_indices.clear();
+                        if let Some(it) = reader.read_indices() {
+                            temp_indices.extend(it.into_u32());
+                        } else {
+                            temp_indices.extend(0..temp_positions.len() as u32);
+                        }
+
+                        temp_tangents.clear();
+                        if let Some(it) = reader.read_tangents() {
+                            temp_tangents.extend(it.map(|t| {
+                                let t_vec = glam::Vec4::from_array(t);
+                                model_mat
+                                    .transform_vector3(t_vec.truncate())
+                                    .normalize()
+                                    .extend(t_vec.w)
+                            }));
+                        } else {
+                            // calculate tangents
+
+                            tan_acc.clear();
+                            tan_acc.resize(temp_positions.len(), glam::Vec3::ZERO);
+
+                            bitan_acc.clear();
+                            bitan_acc.resize(temp_positions.len(), glam::Vec3::ZERO);
+
+                            for chunk in temp_indices.chunks_exact(3) {
+                                let (i0, i1, i2) =
+                                    (chunk[0] as usize, chunk[1] as usize, chunk[2] as usize);
+
+                                let p0 = temp_positions[i0];
+                                let p1 = temp_positions[i1];
+                                let p2 = temp_positions[i2];
+                                let uv0 = temp_tex_coords[i0];
+                                let uv1 = temp_tex_coords[i1];
+                                let uv2 = temp_tex_coords[i2];
+
+                                let e1 = p1 - p0;
+                                let e2 = p2 - p0;
+                                let duv1 = uv1 - uv0;
+                                let duv2 = uv2 - uv0;
+
+                                let det = duv1.x.mul_add(duv2.y, -(duv2.x * duv1.y));
+
+                                let (t, b) = if det.abs() > f32::EPSILON {
+                                    let r = 1.0 / det;
+                                    (
+                                        (e1 * duv2.y - e2 * duv1.y) * r,
+                                        (e2 * duv1.x - e1 * duv2.x) * r,
+                                    )
+                                } else {
+                                    (glam::Vec3::ZERO, glam::Vec3::ZERO)
+                                };
+
+                                tan_acc[i0] += t;
+                                tan_acc[i1] += t;
+                                tan_acc[i2] += t;
+                                bitan_acc[i0] += b;
+                                bitan_acc[i1] += b;
+                                bitan_acc[i2] += b;
+                            }
+
+                            // orthogonalize against the world space normals
+                            temp_tangents.extend(
+                                tan_acc.iter().zip(&bitan_acc).zip(&temp_normals).map(
+                                    |((&t, &b), &n)| {
+                                        let mut t_ortho = t - n * n.dot(t);
+                                        if t_ortho.length_squared() > f32::EPSILON {
+                                            t_ortho = t_ortho.normalize();
+                                        } else {
+                                            let up = if n.y.abs() < 1.0 {
+                                                glam::Vec3::Y
+                                            } else {
+                                                glam::Vec3::X
+                                            };
+                                            t_ortho = n.cross(up).normalize();
+                                        }
+
+                                        let w = if n.cross(t_ortho).dot(b) < 0.0 {
+                                            -1.0
+                                        } else {
+                                            1.0
+                                        };
+                                        t_ortho.extend(w)
+                                    },
+                                ),
+                            );
+                        }
 
                         let material_index = materials.len() as u32;
 
@@ -474,34 +636,39 @@ impl Scene {
                             norm_tex.as_ref().map(|t| t.texture().source().index()),
                         );
 
+                        let (emissive_tex_layer, emissive_uv) = get_layer_and_uv(
+                            mat.emissive_texture().map(|t| t.texture().source().index()),
+                        );
+
                         materials.push(GpuMaterial {
                             base_color_factor: glam::Vec4::from(pbr.base_color_factor()),
                             base_color_uv,
                             normal_uv,
                             metallic_roughness_uv,
+                            emissive_uv,
                             emissive: glam::Vec4::new(
                                 mat.emissive_factor()[0],
                                 mat.emissive_factor()[1],
                                 mat.emissive_factor()[2],
-                                mat.emissive_strength().unwrap_or(1.0),
+                                mat.emissive_strength().unwrap_or(1.0), // not sure about if this should be 1.0 or 0.0
                             ),
                             base_color_tex_layer,
                             normal_scale: norm_tex.map_or(1.0, |t| t.scale()),
                             normal_tex_layer,
                             metallic_roughness_tex_layer,
+                            emissive_tex_layer,
                             metallic_factor: pbr.metallic_factor(),
                             roughness_factor: pbr.roughness_factor(),
-                            pad: [0; 2],
+                            double_sided: i32::from(mat.double_sided()),
                         });
 
-                        for chunk in indices.chunks_exact(3) {
-                            let i0 = chunk[0] as usize;
-                            let i1 = chunk[1] as usize;
-                            let i2 = chunk[2] as usize;
+                        for chunk in temp_indices.chunks_exact(3) {
+                            let (i0, i1, i2) =
+                                (chunk[0] as usize, chunk[1] as usize, chunk[2] as usize);
 
-                            let p0 = model_mat.transform_point3(positions[i0]);
-                            let p1 = model_mat.transform_point3(positions[i1]);
-                            let p2 = model_mat.transform_point3(positions[i2]);
+                            let p0 = temp_positions[i0];
+                            let p1 = temp_positions[i1];
+                            let p2 = temp_positions[i2];
 
                             // calculate AABB and centroid for the BVH builder
                             prim_infos.push(PrimitiveInfo {
@@ -516,12 +683,15 @@ impl Scene {
 
                             attributes.push(GpuTriangleAttribute {
                                 index: material_index,
-                                n0: normal_mat.transform_vector3(normals[i0]).normalize(),
-                                n1: normal_mat.transform_vector3(normals[i1]).normalize(),
-                                n2: normal_mat.transform_vector3(normals[i2]).normalize(),
-                                uv0: tex_coords[i0],
-                                uv1: tex_coords[i1],
-                                uv2: tex_coords[i2],
+                                n0: temp_normals[i0],
+                                n1: temp_normals[i1],
+                                n2: temp_normals[i2],
+                                uv0: temp_tex_coords[i0],
+                                uv1: temp_tex_coords[i1],
+                                uv2: temp_tex_coords[i2],
+                                t0: temp_tangents[i0],
+                                t1: temp_tangents[i1],
+                                t2: temp_tangents[i2],
                             });
                         }
                     } else {
@@ -553,6 +723,7 @@ impl Scene {
 
         let bvh_construction_start = web_time::Instant::now();
 
+        // start recursive BVH construction
         if !prim_infos.is_empty() {
             let prim_count = prim_infos.len();
             Self::update_node_bounds(0, &mut bvh_nodes, &prim_infos, 0, prim_count);
@@ -574,6 +745,7 @@ impl Scene {
         );
 
         // calculate a decent starting camera position from scene bounds
+        // to disable this automatic camera positioning, just use move_camera_to() immediately after scene creation
         let root_aabb = bvh_nodes[0];
         let scene_center = (root_aabb.aabb_min + root_aabb.aabb_max) * 0.5;
         let scene_height = root_aabb.aabb_max.y - root_aabb.aabb_min.y;
@@ -587,7 +759,7 @@ impl Scene {
             camera: Camera {
                 position: glam::Vec3::new(
                     scene_center.x,
-                    scene_height.mul_add(0.01, root_aabb.aabb_max.y), // position the camera above the top of the scene bounds
+                    scene_height.mul_add(0.01, root_aabb.aabb_max.y), // automatically position the camera above the top of the scene bounds
                     scene_center.z,
                 ),
                 fov_y: 90.0,
@@ -616,7 +788,7 @@ impl Scene {
         Ok(scene)
     }
 
-    // updates bounding box for a given node based on triangles it spans
+    /// Update the BVH node's bounding box based on the triangles it spans.
     fn update_node_bounds(
         node_idx: usize,
         nodes: &mut [GpuBvhNode],
@@ -631,7 +803,9 @@ impl Scene {
         nodes[node_idx].aabb_min = aabb.min;
         nodes[node_idx].aabb_max = aabb.max;
     }
-    // binning SAH sub-divider
+
+    /// Recursive binning SAH sub-divider.
+    /// `node_idx` is the index of the current node in `nodes`, and `start` and `end` specify the range of primitives in `prim_infos`, `geometries`, and `attributes` that this node spans.
     fn subdivide(
         node_idx: usize,
         nodes: &mut Vec<GpuBvhNode>,
@@ -813,10 +987,12 @@ impl Scene {
         );
     }
 
+    /// Resize the camera's aspect ratio, typically called when the viewport is resized.
     pub fn resize_camera_aspect_ratio(&mut self, width: f32, height: f32) {
         self.camera.aspect_ratio = width / height;
     }
 
+    /// Move the camera based on currently pressed keys. Returns true if the camera was moved, false if no relevant keys were pressed or if opposite keys cancel out.
     pub fn move_camera(
         &mut self,
         pressed_keys: &std::collections::HashSet<winit::keyboard::KeyCode>,
@@ -851,17 +1027,25 @@ impl Scene {
         };
 
         let vert_dir = (if space { 1.0 } else { 0.0 }) - (if shift { 1.0 } else { 0.0 });
+        let vertical_movement = vert_dir * vertical_speed * self.camera.movement_speeds[1];
 
-        self.camera.position += move_xz
-            + glam::Vec3::new(
-                0.0,
-                vert_dir * vertical_speed * self.camera.movement_speeds[1],
-                0.0,
-            );
+        // check if there's any actual movement
+        // keys might be pressed but cancel each other out (e.g. W and S)
+        if move_xz.length_squared() <= f32::EPSILON && vertical_movement.abs() <= f32::EPSILON {
+            return false;
+        }
+
+        self.camera.position += move_xz + glam::Vec3::new(0.0, vertical_movement, 0.0);
 
         true
     }
 
+    /// Instantly move the camera to a specific position, ignoring any currently pressed keys. Useful for teleporting or resetting camera position.
+    pub const fn move_camera_to(&mut self, position: glam::Vec3) {
+        self.camera.position = position;
+    }
+
+    /// Rotate the camera based on mouse movement deltas. `dx` and `dy` are the changes in mouse position since the last frame, and the sensitivities control how much the camera rotates in response to mouse movement.
     pub fn rotate_camera(
         &mut self,
         dx: f32,
@@ -878,7 +1062,19 @@ impl Scene {
             .clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2);
     }
 
-    pub fn prepare_gpu_camera(&self) -> GpuCamera {
+    /// Instantly rotate the camera to specific yaw and pitch angles, ignoring mouse movement. Useful for teleporting or resetting the camera orientation.
+    pub fn rotate_camera_to(&mut self, yaw: f32, pitch: f32) {
+        self.camera.yaw = yaw;
+        self.camera.pitch = pitch;
+
+        self.camera.pitch = self
+            .camera
+            .pitch
+            .clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2);
+    }
+
+    /// Prepare a GpuCamera struct with the current camera parameters, ready to be uploaded to the GPU. The `frame_count` parameter is included in the `position_and_frame_count` field, which can be used in shaders for effects that depend on the number of frames rendered (e.g., accumulation).
+    pub fn prepare_gpu_camera(&self, frame_count: u32) -> GpuCamera {
         let cam = &self.camera;
 
         let rotation_mat =
@@ -897,13 +1093,14 @@ impl Scene {
         let lower_left_corner3 = cam.position + forward3 - horizontal3 / 2.0 - vertical3 / 2.0;
 
         GpuCamera {
-            position: glam::Vec4::from((cam.position, 0.0)),
+            position_and_frame_count: glam::Vec4::from((cam.position, frame_count as f32)),
             lower_left_corner: glam::Vec4::from((lower_left_corner3, 0.0)),
             horizontal: glam::Vec4::from((horizontal3, 0.0)),
             vertical: glam::Vec4::from((vertical3, 0.0)),
         }
     }
 
+    /// Save the scene data (geometries, attributes, materials) to a YAML file in the `debug_output/` directory at the crate root. This is only compiled when the `testing` feature is enabled and the target architecture is not wasm32, as file system access is not available in WebAssembly.
     #[cfg(all(feature = "testing", not(target_arch = "wasm32")))]
     fn save_scene_data_json(&self) {
         #[derive(serde::Serialize)]
@@ -995,6 +1192,7 @@ impl Scene {
         }
     }
 
+    /// Save a texture atlas as a PNG image in the `debug_output/` directory at the crate root. This is only compiled when the `testing` feature is enabled and the target architecture is not wasm32, as file system access is not available in WebAssembly.
     #[cfg(all(feature = "testing", not(target_arch = "wasm32")))]
     fn save_rgba_image(filename: &str, pixels: &[u8], width: u32, height: u32) {
         // create debug_output directory in the crate root

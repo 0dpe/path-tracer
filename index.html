@@ -150,7 +150,7 @@
         (async () => {
             if (!navigator.gpu) {
                 console.error("WebGPU not supported!");
-                showError(`Your browser doesn't support WebGPU (or it's not enabled). Try Chrome 113+, Safari 26+ or Firefox 145+.`);
+                showError(`WebGPU isn't supported in this browser (or it's not enabled). Try Chrome 113+, Safari 26+ or Firefox 145+.`);
                 return;
             }
 

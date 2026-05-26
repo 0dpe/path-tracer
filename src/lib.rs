@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 pub mod render; // pub just for the benchmark
 mod utils;
 
@@ -8,6 +10,7 @@ use utils::expect_universal::ExpectUniversal;
 #[cfg(all(feature = "testing", target_arch = "wasm32"))]
 compile_error!("feature `testing` is not supported on wasm32");
 
+/// The main function that runs the app, called by both native and web targets.
 // if target_arch is wasm32, apply wasm_bindgen(start)
 // this cfg_attr done because wasm_bindgen dependency isn't in scope for non-wasm
 // wasm_bindgen(start) marks the first function that gets executed when this code, converted to wasm, is loaded into the browser
@@ -53,6 +56,8 @@ pub fn run() {
     }
 }
 
+/// The main application struct that implements the [`winit::application::ApplicationHandler`] trait.
+/// Holds the application state and, on wasm32, an event loop proxy for sending custom events.
 struct App {
     #[cfg(target_arch = "wasm32")]
     proxy: Option<winit::event_loop::EventLoopProxy<State>>, // used to send custom events to EventLoop
@@ -73,6 +78,7 @@ impl App {
 }
 
 impl winit::application::ApplicationHandler<State> for App {
+    /// Initialize the application by creating a window and a [`State`].
     // called by winit when the window is resumed
     // seems to be called only once when the window is opened
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
@@ -162,6 +168,7 @@ impl winit::application::ApplicationHandler<State> for App {
         self.state = Some(event); // for wasm, this is where self.state is set, and initialization is finished
     }
 
+    /// Handle window events such as close, resize, redraw, keyboard input, and mouse button input by calling the corresponding methods in [`State`].
     // called by winit when the OS or browser sends an event to the window
     fn window_event(
         &mut self,
@@ -193,6 +200,7 @@ impl winit::application::ApplicationHandler<State> for App {
         } // if self.state is not Some() but is None, nothing is done
     }
 
+    /// Handle device events such as mouse motion by calling the corresponding method in [`State`].
     // device events are non-window specific, so they can be captured even when the window is not in focus
     // however, only when the mouse is over the window will mouse motion events be captured
     // mouse motion events for 3D camera control are better captured as device events

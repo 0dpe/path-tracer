@@ -1,7 +1,15 @@
-// on web, expect() or unwrap() are both not recommended
-// instead, wasm_bindgen's expect_throw() or unwrap_throw() are recommended, which throws a JavaScript error
-// however, always writing two versions of the same code, one with expect() and one with expect_throw(), is tedious
-// so, just always use expect_universal() defined here
+/// On web, [`Result::expect()`] or [`Option::unwrap()`] both aren't recommended.
+///
+/// Instead, wasm_bindgen's
+/// [`wasm_bindgen::UnwrapThrowExt::expect_throw`] or
+/// [`wasm_bindgen::UnwrapThrowExt::unwrap_throw`] are recommended,
+/// which throw JavaScript errors.
+///
+/// However, always writing two versions of the same code, one with
+/// [`Result::expect()`] and one with
+/// [`wasm_bindgen::UnwrapThrowExt::expect_throw`], is tedious.
+///
+/// So, always use [`Self::expect_universal`] defined here.
 pub trait ExpectUniversal<T> {
     fn expect_universal(self, message: &str) -> T;
 }
