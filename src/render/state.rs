@@ -123,11 +123,11 @@ fn create_texture_bind_groups(
             layout: compute_texture_layout,
             entries: &[
                 wgpu::BindGroupEntry {
-                    binding: 0, // matches with shader.wgsl @binding(0)
+                    binding: 0, // matches with @binding(0)
                     resource: wgpu::BindingResource::TextureView(&storage_texture_view),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 1, // matches with shader.wgsl @binding(1)
+                    binding: 1, // matches with @binding(1)
                     resource: wgpu::BindingResource::Buffer(
                         accumulation_buffer.as_entire_buffer_binding(),
                     ),
@@ -139,11 +139,11 @@ fn create_texture_bind_groups(
             layout: render_texture_layout,
             entries: &[
                 wgpu::BindGroupEntry {
-                    binding: 0, // matches with shader.wgsl @binding(0)
+                    binding: 0, // matches with @binding(0)
                     resource: wgpu::BindingResource::TextureView(&storage_texture_view),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 1, // matches with shader.wgsl @binding(1)
+                    binding: 1, // matches with @binding(1)
                     resource: wgpu::BindingResource::Sampler(sampler),
                 },
             ],
@@ -248,10 +248,8 @@ impl State {
                 entries: &[
                     // storage texture
                     wgpu::BindGroupLayoutEntry {
-                        binding: 0, // matches with shader.wgsl @binding(0)
-                        // which stages can see this binding
-                        // even though both render and compute bind group layouts have entries with binding 0 (and group 0), this visibility distinguishes them
-                        visibility: wgpu::ShaderStages::COMPUTE,
+                        binding: 0,                              // matches with @binding(0)
+                        visibility: wgpu::ShaderStages::COMPUTE, // which stages can see this binding
                         ty: wgpu::BindingType::StorageTexture {
                             access: wgpu::StorageTextureAccess::WriteOnly,
                             format: wgpu::TextureFormat::Rgba16Float, // linear gamma
@@ -279,7 +277,7 @@ impl State {
                 label: Some("Render texture bind group layout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
-                        binding: 0,                               // matches with shader.wgsl @binding(0)
+                        binding: 0,                               // matches with @binding(0)
                         visibility: wgpu::ShaderStages::FRAGMENT, // which stages can see this binding
                         ty: wgpu::BindingType::Texture {
                             sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -289,7 +287,7 @@ impl State {
                         count: None,
                     },
                     wgpu::BindGroupLayoutEntry {
-                        binding: 1,                               // matches with shader.wgsl @binding(1)
+                        binding: 1,                               // matches with @binding(1)
                         visibility: wgpu::ShaderStages::FRAGMENT, // which stages can see this binding
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
@@ -375,9 +373,10 @@ impl State {
                 ],
             });
 
-        // create a shader module from shader.wgsl
-        // used for everything: compute, vertex, and fragment
-        let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
+        // create a shader module from vertex_fragment.wgsl
+        // used for vertex and fragment
+        let vertex_fragment_shader =
+            device.create_shader_module(wgpu::include_wgsl!("vertex_fragment.wgsl"));
 
         // configure compute and render pipelines with the bind group layouts and the shader module
         let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -393,8 +392,8 @@ impl State {
                     immediate_size: 0,
                 }),
             ),
-            module: &shader,
-            entry_point: Some("compute_main"), // function name in shader.wgsl
+            module: &device.create_shader_module(wgpu::include_wgsl!("trace_paths.wgsl")), // the compute shader is in a separate file
+            entry_point: Some("compute_main"), // function name in the wgsl file
             compilation_options: Default::default(),
             cache: None,
         });
@@ -410,8 +409,8 @@ impl State {
                 }),
             ),
             vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"), // function name in shader.wgsl
+                module: &vertex_fragment_shader,
+                entry_point: Some("vs_main"), // function name in vertex_fragment.wgsl
                 compilation_options: Default::default(),
                 buffers: &[],
             },
@@ -427,8 +426,8 @@ impl State {
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"), // function name in shader.wgsl
+                module: &vertex_fragment_shader,
+                entry_point: Some("fs_main"), // function name in vertex_fragment.wgsl
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_config.format, // linear gamma
@@ -695,10 +694,10 @@ impl State {
                         });
 
                     compute_pass.set_pipeline(&self.compute_pipeline);
-                    compute_pass.set_bind_group(0, &self.compute_texture_bind_group, &[]); // the u32 passed here, which is 0, matches with @group(0) in shader.wgsl
+                    compute_pass.set_bind_group(0, &self.compute_texture_bind_group, &[]); // the u32 passed here, which is 0, matches with @group(0)
                     compute_pass.set_bind_group(1, &self.compute_scene_bind_group, &[]);
 
-                    let workgroup_size = 8; // matches with @compute @workgroup_size(8, 8, 1) in shader.wgsl
+                    let workgroup_size = 8; // matches with @compute @workgroup_size(8, 8, 1)
                     let workgroup_count_x = self.surface_config.width.div_ceil(workgroup_size); // make sure that the entire texture is covered by 8x8 workgroups, since texture size should always equal surface_config size
                     let workgroup_count_y = self.surface_config.height.div_ceil(workgroup_size);
                     compute_pass.dispatch_workgroups(workgroup_count_x, workgroup_count_y, 1);

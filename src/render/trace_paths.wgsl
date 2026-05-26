@@ -1,3 +1,7 @@
+// the main path tracing shader
+// implements a basic path tracer with support for diffuse and metallic/specular materials, normal interpolation, emissive materials, etc.
+// supports texture maps for base color, metallic/roughness, normal, emissive
+
 // TODO: double_sided is never actually used
 // TODO: implement tracing shadow rays for better denoising
 // TODO: dorm scene has weird vertical shading problem
@@ -437,48 +441,4 @@ fn compute_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // average out result
     let display_color = accumulated / f32(frame_count + 1u);
     textureStore(screen, global_id.xy, vec4<f32>(display_color, 1.0));
-}
-
-@vertex
-fn vs_main(@builtin(vertex_index) vert_index: u32) -> @builtin(position) vec4<f32> {
-    let pos = array(
-        vec2<f32>(-1.0, -1.0), // clip space range [-1, 1] so extending to 3 stretches the triangle to cover the clip space
-        vec2<f32>(3.0, -1.0), // https://webgpufundamentals.org/webgpu/lessons/webgpu-large-triangle-to-cover-clip-space.html
-        vec2<f32>(-1.0, 3.0),
-    );
-    return vec4<f32>(pos[vert_index], 0.0, 1.0);
-}
-
-@group(0) @binding(0) var output_texture: texture_2d<f32>;
-@group(0) @binding(1) var tex_sampler: sampler;
-
-// ACES filmic tone mapping approximation
-fn aces_film(color: vec3<f32>) -> vec3<f32> {
-    let a = 2.51;
-    let b = 0.03;
-    let c = 2.43;
-    let d = 0.59;
-    let e = 0.14;
-
-    return clamp((color * (a * color + b)) / (color * (c * color + d) + e),
-        vec3<f32>(0.0),
-        vec3<f32>(1.0));
-}
-
-@fragment
-fn fs_main(@builtin(position) frag_position: vec4<f32>) -> @location(0) vec4<f32> {
-    let uv = frag_position.xy / vec2<f32>(textureDimensions(output_texture));
-    let color = textureSample(output_texture, tex_sampler, uv);
-
-    // exposure control can be added by multiplying color.rgb with an exposure factor before tone mapping
-    let mapped = aces_film(color.rgb);
-
-    // linear -> sRGB gamma conversion
-    let srgb_color = select(
-        mapped * 12.92,
-        pow(mapped, vec3<f32>(1.0 / 2.4)) * 1.055 - 0.055,
-        mapped > vec3<f32>(0.0031308)
-    );
-
-    return vec4<f32>(srgb_color, color.a);
 }

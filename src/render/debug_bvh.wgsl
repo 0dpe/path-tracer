@@ -1,3 +1,7 @@
+// this shader renders the BVH structure as a wireframe, which is very useful for debugging the BVH
+// leaf nodes are colored red, and internal nodes are colored blue
+// see the main path tracing compute shader trace_paths.wgsl for explanation on the bindings, how the BVH is traversed, how ray-AABB intersection is performed, etc.
+
 struct GpuTriangleGeometry {
     coords: array<f32, 9>,
 };
@@ -181,43 +185,4 @@ fn compute_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let display_color = accumulated / f32(frame_count + 1u);
     textureStore(screen, global_id.xy, vec4<f32>(display_color, 1.0));
-}
-
-@vertex
-fn vs_main(@builtin(vertex_index) vert_index: u32) -> @builtin(position) vec4<f32> {
-    let pos = array(
-        vec2<f32>(-1.0, -1.0),
-        vec2<f32>(3.0, -1.0),
-        vec2<f32>(-1.0, 3.0),
-    );
-    return vec4<f32>(pos[vert_index], 0.0, 1.0);
-}
-
-@group(0) @binding(0) var output_texture: texture_2d<f32>;
-@group(0) @binding(1) var tex_sampler: sampler;
-
-fn aces_film(color: vec3<f32>) -> vec3<f32> {
-    let a = 2.51;
-    let b = 0.03;
-    let c = 2.43;
-    let d = 0.59;
-    let e = 0.14;
-
-    return clamp((color * (a * color + b)) / (color * (c * color + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
-}
-
-@fragment
-fn fs_main(@builtin(position) frag_position: vec4<f32>) -> @location(0) vec4<f32> {
-    let uv = frag_position.xy / vec2<f32>(textureDimensions(output_texture));
-    let color = textureSample(output_texture, tex_sampler, uv);
-
-    let mapped = aces_film(color.rgb);
-
-    let srgb_color = select(
-        mapped * 12.92,
-        pow(mapped, vec3<f32>(1.0 / 2.4)) * 1.055 - 0.055,
-        mapped > vec3<f32>(0.0031308)
-    );
-
-    return vec4<f32>(srgb_color, color.a);
 }

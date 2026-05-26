@@ -1,4 +1,5 @@
-//! Load and format a .glb glTF 2.0 file for passing to the GPU.
+//! Load and format a 3D scene stored in a .glb glTF 2.0 file for passing to the GPU.
+
 // this module is only used by state.rs
 // on both native and wasm, loading is at runtime
 // this allows the glTF file to change without having to rebuild the WASM
@@ -13,7 +14,7 @@ pub const ATLAS_SIZE: i32 = 8192;
 
 // TODO: fix transparency in textures; parsing is done correctly, but shader is not correct. also, in gltf::material, parse alpha_mode and alpha_cutoff to do this properly
 // TODO: textures are messed up with sponza https://github.com/ludicon/sponza-gltf
-// TODO: test against the sample glTF
+// TODO: test against the sample glTFs
 
 /// Contains all the data loaded from a glTF file and formatted for the GPU.
 #[derive(Debug)]
@@ -992,7 +993,7 @@ impl Scene {
         self.camera.aspect_ratio = width / height;
     }
 
-    /// Move the camera based on currently pressed keys. Returns true if the camera was moved, false if no relevant keys were pressed or if opposite keys cancel out.
+    /// Move the camera based on currently pressed keys. Returns `true` if the camera was moved, `false` if no relevant keys were pressed or if opposite keys cancel out.
     pub fn move_camera(
         &mut self,
         pressed_keys: &std::collections::HashSet<winit::keyboard::KeyCode>,
